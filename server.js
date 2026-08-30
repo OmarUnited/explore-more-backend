@@ -134,3 +134,38 @@ const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(` Server running on http://localhost:${PORT}`);
 });
+// Get active quests with user progress
+app.get('/api/quests/:user_id', async (req, res) => {
+  try {
+    const query = `
+      SELECT q.*, COALESCE(uq.progress, 0) as progress, COALESCE(uq.is_completed, FALSE) as is_completed
+      FROM quests q
+      LEFT JOIN user_quests uq ON q.id = uq.quest_id AND uq.user_id = ?
+    `;
+    const [rows] = await db.execute(query, [req.params.user_id]);
+    res.status(200).json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Collect Mystery Chest & Award XP/Coins
+app.post('/api/collectibles/collect', async (req, res) => {
+  const { user_id, collectible_id, xp_value, coin_value } = req.body;
+  if (!user_id || !collectible_id) return res.status(400).json({ error: 'Missing user_id or collectible_id' });
+
+  try {
+    await db.execute('INSERT IGNORE INTO user_collectibles (user_id, collectible_id) VALUES (?, ?)', [user_id, collectible_id]);
+    await db.execute(`
+      UPDATE user_exploration_stats 
+      SET total_xp = total_xp + ?, 
+          coins_collected = coins_collected + ?,
+          current_level = FLOOR(1 + SQRT((total_xp + ?) / 100))
+      WHERE user_id = ?
+    `, [xp_value || 50, coin_value || 25, xp_value || 50, user_id]);
+
+    res.status(200).json({ message: 'Collectible recorded successfully' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
